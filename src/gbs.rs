@@ -4,86 +4,136 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use std::{
-    io::{self, BufRead, BufReader},
-    process::{Command, ExitStatus, Stdio},
-};
+//! This module deals with parsing GBS files.
 
-use thiserror::Error;
+use std::hint::unreachable_unchecked;
 
-use crate::{RegLog, RegWrite, RegWriteParseErr};
+use parse_display::Display;
 
-pub fn run_gbs(gbsplay_path: &str, gbs: &str) -> Result<Vec<RegLog>, GbsRunError> {
-    let mut child = Command::new(gbsplay_path)
-        .arg("-o")
-        .arg("iodumper")
-        .arg(gbs)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(GbsRunError::StartupErr)?;
+#[derive(Debug)]
+pub struct Gbs<'gbs>(&'gbs [u8]);
 
-    let output = BufReader::new(child.stdout.take().unwrap());
-    let mut lines = output
-        .lines()
-        .enumerate()
-        .map(|(line_no, res)| res.map(|line| (line_no + 1, line)));
+impl<'gbs> Gbs<'gbs> {
+    const HEADER_LEN: usize = 0x70;
+    /// The driver should never access this area.
+    pub const MIN_ROM_ADDR: u16 = 0x400;
 
-    let mut logs = Vec::new();
-    // Between tracks, the cycle counter is reset to 0, which causes the delta to be printed as a very large positive integer as well.
-    // This is bad, but serves as a way to delineate tracks.
-    // gbsplay reportedly allows only playing a subset of the tracks, but this appears not to work.
-    loop {
-        // Ignore all initialisation writes.
-        for res in lines.by_ref() {
-            let line = res?.1;
-            if line.starts_with("subsong ") {
-                break;
+    pub fn new(data: &'gbs [u8]) -> Result<Self, FormatError<'gbs>> {
+        if data.len() < Self::HEADER_LEN {
+            return Err(FormatError::TruncatedHeader(data.len()));
+        }
+
+        let magic = &data[0..3];
+        if magic != b"GBS" {
+            return Err(FormatError::BadMagic(magic));
+        }
+
+        let version = data[3];
+        if version != 1 {
+            return Err(FormatError::UnsupportedVersion(version));
+        }
+
+        let gbs = Self(data);
+        if gbs.nb_songs() == 0 {
+            return Err(FormatError::ZeroSongs);
+        }
+
+        if !(Self::MIN_ROM_ADDR..=0x4000).contains(&gbs.addr(AddressKind::Load)) {
+            return Err(FormatError::BadAddress(
+                AddressKind::Load,
+                gbs.addr(AddressKind::Load),
+            ));
+        }
+        for kind in [AddressKind::Init, AddressKind::Play] {
+            let addr = gbs.addr(kind);
+            if !(Self::MIN_ROM_ADDR..0x8000).contains(&addr) || addr < gbs.addr(AddressKind::Load) {
+                return Err(FormatError::BadAddress(kind, addr));
             }
         }
 
-        let mut writes = Vec::new();
-        let last = loop {
-            if let Some(res) = lines.next() {
-                let (line_no, line) = res?;
-                if line.starts_with("ffffffff") || line.trim().is_empty() {
-                    break false;
-                }
+        Ok(gbs)
+    }
 
-                if let Some(write) = RegWrite::try_parse(&line)
-                    .map_err(|err| GbsRunError::ParseError(line_no, line, err))?
-                {
-                    writes.push(write);
-                }
-            } else {
-                break true;
-            }
-        };
-        logs.push(RegLog::new(writes));
+    fn read16(&self, ofs: usize) -> u16 {
+        let raw = [self.0[ofs], self.0[ofs + 1]];
+        u16::from_le_bytes(raw)
+    }
 
-        if last {
-            break;
+    pub fn nb_songs(&self) -> u8 {
+        self.0[4]
+    }
+
+    pub fn first_song(&self) -> u8 {
+        self.0[5]
+    }
+
+    pub fn addr(&self, kind: AddressKind) -> u16 {
+        self.read16(kind.ofs())
+    }
+
+    pub fn stack_ptr(&self) -> u16 {
+        self.read16(12)
+    }
+
+    pub fn timer_mod(&self) -> u8 {
+        self.0[14]
+    }
+
+    pub fn timer_div_bit(&self) -> u8 {
+        match self.timer_ctrl() & 3 {
+            0 => 9,
+            1 => 3,
+            2 => 5,
+            3 => 7,
+            _ => unsafe { unreachable_unchecked() },
         }
     }
 
-    let status = child.wait().map_err(GbsRunError::WaitError)?;
-    if !status.success() {
-        return Err(GbsRunError::ExitFailure(status));
+    pub fn use_timer(&self) -> bool {
+        self.timer_ctrl() & 4 != 0
     }
 
-    Ok(logs)
+    pub fn double_speed(&self) -> bool {
+        self.timer_ctrl() & 0x80 != 0
+    }
+
+    fn timer_ctrl(&self) -> u8 {
+        self.0[15]
+    }
+
+    pub fn rom(&self) -> &[u8] {
+        &self.0[0x70..]
+    }
 }
 
-#[derive(Debug, Error)]
-pub enum GbsRunError {
-    #[error("Failed to start")]
-    StartupErr(#[source] io::Error),
-    #[error("gbsplay exited with code {0}")]
-    ExitFailure(ExitStatus),
-    #[error("Failed to read gbsplay's log: {0}")]
-    ReadError(#[from] io::Error),
-    #[error("Error parsing line {0} (\"{1}\"): {2}")]
-    ParseError(usize, String, #[source] RegWriteParseErr),
-    #[error("Error waiting for gbsplay: {0}")]
-    WaitError(#[source] io::Error),
+#[derive(Debug, Display)]
+pub enum FormatError<'a> {
+    #[display("expected at least 0x70 header bytes, got only {0}")]
+    TruncatedHeader(usize),
+    #[display("expected \"GBS\" magic, got \"{0:?}\"")]
+    BadMagic(&'a [u8]),
+    #[display("unsupported version {0}")]
+    UnsupportedVersion(u8),
+    #[display("zero songs specified")]
+    ZeroSongs,
+    #[display("bad {0} address ${1:04x}")]
+    BadAddress(AddressKind, u16),
+}
+
+#[derive(Debug, Display, Clone, Copy)]
+#[display(style = "lowercase")]
+pub enum AddressKind {
+    Load,
+    Init,
+    Play,
+}
+
+impl AddressKind {
+    fn ofs(&self) -> usize {
+        match self {
+            Self::Load => 6,
+            Self::Init => 8,
+            Self::Play => 10,
+        }
+    }
 }

@@ -1,0 +1,3 @@
+# TODO
+
+- Detect swapped writes?

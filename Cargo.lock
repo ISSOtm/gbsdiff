@@ -41,34 +41,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "149f75bbec1827618262e0855a68f0f9a7f2edc13faebf33c4f16d6725edb6a9"
 
 [[package]]
-name = "discrim"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1c845f9118cdac9ec16df4bebe2471de008581f0cc3cb3e8ec2bb0ccc8d17c2"
+name = "gb-cpu-sim"
+version = "1.0.0"
 dependencies = [
- "discrim-codegen",
-]
-
-[[package]]
-name = "discrim-codegen"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e405890885617c96de8fdd27f22c637f9a7afe14132a4a607d7734d74e7b3ed"
-dependencies = [
- "quote",
- "syn",
+ "try-from-discrim",
 ]
 
 [[package]]
 name = "gbsdiff"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argh",
- "discrim",
+ "gb-cpu-sim",
  "owo-colors",
  "parse-display",
  "slicedisplay",
- "thiserror",
 ]
 
 [[package]]
@@ -101,9 +88,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b25af4ef94a8528b41fb49a696e361dc6ef975c782417268072d987ac327964"
 dependencies = [
- "once_cell",
  "parse-display-derive",
- "regex",
 ]
 
 [[package]]
@@ -123,9 +108,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.44"
+version = "1.0.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bd7356a8122b6c4a24a82b278680c73357984ca2fc79a0f9fa6dea7dced7c58"
+checksum = "94e2ef8dbfc347b10c094890f778ee2e36ca9bb4262e86dc99cd217e35f3470b"
 dependencies = [
  "unicode-ident",
 ]
@@ -187,9 +172,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.100"
+version = "1.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52205623b1b0f064a4e71182c3b18ae902267282930c6d5462c91b859668426e"
+checksum = "e90cde112c4b9690b8cbe810cba9ddd8bc1d7472e2cae317b69e9438c1cba7d2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -197,19 +182,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "thiserror"
-version = "1.0.36"
+name = "try-from-discrim"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a99cb8c4b9a8ef0e7907cd3b617cc8dc04d571c4e73c8ae403d80ac160bb122"
-dependencies = [
- "thiserror-impl",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.36"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a891860d3c8d66fec8e73ddb3765f90082374dbaaa833407b904a94f1a7eb43"
+checksum = "7448782f2a418f7882a0c6dee154358b2d44566919579e5d47d71e9211de4944"
 dependencies = [
  "proc-macro2",
  "quote",

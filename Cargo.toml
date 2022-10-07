@@ -1,14 +1,12 @@
 [package]
 name = "gbsdiff"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 argh = "0.1.9"
-discrim = "0.1.1"
+#gb-cpu-sim = "1.0.0"
+gb-cpu-sim = { version = "1.0.0", path = "../gb-cpu-sim" }
 owo-colors = "3.5.0"
-parse-display = "0.6.0"
+parse-display = { version = "0.6.0", default-features = false }
 slicedisplay = "0.2.2"
-thiserror = "1.0.36"
