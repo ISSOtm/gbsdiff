@@ -13,7 +13,10 @@ use std::{
 };
 
 use argh::FromArgs;
-use owo_colors::OwoColorize;
+use owo_colors::{
+    OwoColorize,
+    Stream::{Stderr, Stdout},
+};
 use slicedisplay::SliceDisplay;
 
 mod diff;
@@ -30,11 +33,11 @@ struct Args {
     /// silence diagnostics with a higher level than this (default: warning)
     max_level: DiagnosticLevel,
     #[argh(option, short = 'm', default = "1000")]
-    /// how many diagnostics to report per song, at most (default: 1000)
+    /// how many differences to report per song, at most (default: 1000)
     max_reports: usize,
     #[argh(option, short = 't', default = "60")]
     /// time out simulation of a song after this many seconds (default: 60)
-    timeout: u8,
+    timeout: u16,
     #[argh(switch, short = 'T')]
     /// make timeout non-fatal (useful for looping tracks)
     allow_timeout: bool,
@@ -50,6 +53,12 @@ struct Args {
     #[argh(option, short = 'd', default = "BeforeOrAfter::After")]
     /// print the diagnostics of either the "before" GBS, the "after" one, or "none" (default: after)
     print_diagnostics: BeforeOrAfter,
+    #[argh(option, short = 'j', default = "20")]
+    /// identical IO writes displaced by strictly less cycles than this will be treated as notes instead of errors (default: 20)
+    jitter: u16,
+    #[argh(option, default = "None", from_str_fn(parse_color_arg))]
+    /// whether to colorize output: auto (default), always, never
+    color: Option<bool>,
 
     #[argh(positional)]
     /// path to the GBS file that was built before the changes
@@ -69,18 +78,27 @@ fn main() {
         })
     });
 
+    if let Some(args_color) = args.color {
+        owo_colors::set_override(args_color)
+    }
+    macro_rules! colorize {
+        ($stream:expr, $base:expr, $($func:ident),+ $(,)?) => {
+            ($base $(.if_supports_color($stream, |text| text.$func()))+)
+        };
+    }
+
     let read_file = |path| {
-        eprintln!(
+        println!(
             "{} {} {}...",
-            "==>".bold(),
-            "Reading".bright_cyan().bold(),
+            colorize!(Stdout, "==>", bold),
+            colorize!(Stdout, "Reading", bright_cyan, bold),
             &path
         );
 
         fs::read(&path).unwrap_or_else(|err| {
             eprintln!(
                 "{} while reading {}: {}",
-                "Error".bright_red().bold(),
+                colorize!(Stderr, "Error", bright_red, bold),
                 path,
                 err
             );
@@ -89,7 +107,12 @@ fn main() {
     };
     let parse_gbs = |data, path| {
         Gbs::new(data).unwrap_or_else(|err| {
-            eprintln!("{} parsing {}: {}", "Error".bright_red().bold(), path, err);
+            eprintln!(
+                "{} parsing {}: {}",
+                colorize!(Stderr, "Error", bright_red, bold),
+                path,
+                err
+            );
             std::process::exit(2);
         })
     };
@@ -100,9 +123,9 @@ fn main() {
 
     let nb_songs = std::cmp::min(before_gbs.nb_songs(), after_gbs.nb_songs());
     if before_gbs.nb_songs() != after_gbs.nb_songs() {
-        eprintln!(
+        println!(
             "{}: Earlier GBS has {} songs, later has {}; only comparing first {}",
-            "warning".bright_yellow().bold(),
+            colorize!(Stdout, "warning", bright_yellow, bold),
             before_gbs.nb_songs(),
             after_gbs.nb_songs(),
             nb_songs,
@@ -113,10 +136,10 @@ fn main() {
     for i in 0..nb_songs {
         let song_ids = (i + before_gbs.first_song(), i + after_gbs.first_song());
 
-        eprintln!(
+        println!(
             "{} {} songs {}...",
-            "==>".bold(),
-            "Simulating".bright_cyan().bold(),
+            colorize!(Stdout, "==>", bold),
+            colorize!(Stdout, "Simulating", bright_cyan, bold),
             SongIDs(song_ids),
         );
         macro_rules! simulate {
@@ -133,9 +156,9 @@ fn main() {
                 ) {
                     Ok(log) => log,
                     Err(err) => {
-                        eprintln!(
+                        println!(
                             "{} to simulate {} song #{}: {}",
-                            "Failed".bold().bright_red(),
+                            colorize!(Stdout, "Failed", bold, bright_red),
                             $path,
                             $song_id,
                             err
@@ -151,10 +174,10 @@ fn main() {
             simulate!(&after_gbs, song_ids.1, args.after),
         );
 
-        eprintln!(
+        println!(
             "{} {} songs {}...",
-            "==>".bold(),
-            "Comparing".bright_cyan().bold(),
+            colorize!(Stdout, "==>", bold),
+            colorize!(Stdout, "Comparing", bright_cyan, bold),
             SongIDs(song_ids),
         );
 
@@ -167,17 +190,24 @@ fn main() {
         }
         .map(|logs| logs.diagnostics.iter().peekable());
 
-        let print_tick = |tick| eprintln!("{} Tick {} {}", "====".bold(), tick, "====".bold());
+        let print_tick = |tick| {
+            println!(
+                "{} Tick {} {}",
+                colorize!(Stdout, "====", bold),
+                tick,
+                colorize!(Stdout, "====", bold)
+            )
+        };
         let mut i = 0;
         macro_rules! report {
             ($diag:expr $(, $label:tt)?) => {
-                eprintln!(
+                println!(
                     "{} on cycle {} (PC = ${:04x}): {}",
                     $diag.level, $diag.when.cycle, $diag.pc, $diag.kind
                 );
                 i += 1;
                 if i == args.max_reports {
-                    eprintln!(
+                    println!(
                         "...stopping at {} diagnostics. Go fix your code!",
                         args.max_reports
                     );
@@ -186,8 +216,9 @@ fn main() {
             };
         }
 
-        'report: for diagnostic in diff::DiffGenerator::new(&logs.0.io_log, &logs.1.io_log)
-            .filter(|diag| diag.level <= args.max_level)
+        'report: for diagnostic in
+            diff::DiffGenerator::new(&logs.0.io_log, &logs.1.io_log, args.jitter)
+                .filter(|diag| diag.level <= args.max_level)
         {
             ok = false;
 
@@ -219,36 +250,42 @@ fn main() {
         }
 
         // Print any leftover diagnostics
-        if let Some(diagnostics) = diagnostics.as_mut() {
-            for diag in diagnostics {
-                if tick != diag.when.tick {
-                    tick = diag.when.tick;
-                    print_tick(tick);
+        if i != args.max_reports {
+            if let Some(diagnostics) = diagnostics.as_mut() {
+                for diag in diagnostics {
+                    if tick != diag.when.tick {
+                        tick = diag.when.tick;
+                        print_tick(tick);
+                    }
+                    report!(diag);
                 }
-                report!(diag);
             }
         }
 
         if ok {
-            eprintln!("{}", "OK!".bright_green().bold());
+            println!("{}", colorize!(Stdout, "OK!", bright_green, bold));
         } else {
             failed.push(SongIDs(song_ids));
         }
     }
 
     if failed.is_empty() {
-        eprintln!(
+        println!(
             "{} {}",
-            "==>".bold(),
-            "All songs are OK!".bright_green().bold()
+            colorize!(Stdout, "==>", bold),
+            colorize!(Stdout, "All songs are OK!", bright_green, bold)
         );
     } else if failed.len() == 1 {
-        eprintln!("{} song: {}", "Failing".bright_red().bold(), failed[0]);
+        println!(
+            "{} song: {}",
+            colorize!(Stdout, "Failing", bright_red, bold),
+            failed[0]
+        );
         std::process::exit(1);
     } else {
-        eprintln!(
+        println!(
             "{} songs: {}",
-            "Failing".bright_red().bold(),
+            colorize!(Stdout, "Failing", bright_red, bold),
             failed.display()
         );
         std::process::exit(1);
@@ -324,6 +361,18 @@ fn parse_watch_arg(arg: &str) -> Result<(u16, u8), String> {
     ))
 }
 
+fn parse_color_arg(arg: &str) -> Result<Option<bool>, String> {
+    if arg.eq_ignore_ascii_case("auto") {
+        Ok(None)
+    } else if arg.eq_ignore_ascii_case("always") {
+        Ok(Some(true))
+    } else if arg.eq_ignore_ascii_case("never") {
+        Ok(Some(false))
+    } else {
+        Err("expected \"auto\", \"always\", or \"never\"".to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Timestamp {
     /// Tick 0 is the "init" phase.
@@ -334,9 +383,21 @@ pub struct Timestamp {
 impl Display for DiagnosticLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Error => write!(f, "{}", "Error".bright_red()),
-            Self::Warning => write!(f, "{}", "Warning".bright_yellow()),
-            Self::Note => write!(f, "{}", "Note".bright_blue()),
+            Self::Error => write!(
+                f,
+                "{}",
+                "Error".if_supports_color(Stdout, |text| text.bright_red())
+            ),
+            Self::Warning => write!(
+                f,
+                "{}",
+                "Warning".if_supports_color(Stdout, |text| text.bright_yellow())
+            ),
+            Self::Note => write!(
+                f,
+                "{}",
+                "Note".if_supports_color(Stdout, |text| text.bright_blue())
+            ),
         }
     }
 }

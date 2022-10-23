@@ -38,15 +38,13 @@ impl<'gbs> Gbs<'gbs> {
             return Err(FormatError::ZeroSongs);
         }
 
-        if !(Self::MIN_ROM_ADDR..=0x4000).contains(&gbs.addr(AddressKind::Load)) {
-            return Err(FormatError::BadAddress(
-                AddressKind::Load,
-                gbs.addr(AddressKind::Load),
-            ));
+        let load_addr = gbs.addr(AddressKind::Load);
+        if !(Self::MIN_ROM_ADDR..=0x4000).contains(&load_addr) {
+            return Err(FormatError::BadAddress(AddressKind::Load, load_addr));
         }
         for kind in [AddressKind::Init, AddressKind::Play] {
             let addr = gbs.addr(kind);
-            if !(Self::MIN_ROM_ADDR..0x8000).contains(&addr) || addr < gbs.addr(AddressKind::Load) {
+            if !(load_addr..0x8000).contains(&addr) {
                 return Err(FormatError::BadAddress(kind, addr));
             }
         }

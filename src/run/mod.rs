@@ -109,7 +109,7 @@ pub(crate) struct Logbook {
 pub(crate) enum DiagnosticKind {
     #[display("unsupported read from ${0:x}")]
     UnsupportedRead(Address),
-    #[display("unsupported write of ${0:02x} to ${1:04x}")]
+    #[display("unsupported write of ${1:02x} to ${0:04x}")]
     UnsupportedWrite(Address, u8),
     #[display("read from echo RAM at ${0:x}")]
     EchoRamRead(Address),
@@ -232,7 +232,7 @@ impl<'a> LogbookWriter<'a> {
             logbook,
             max_level,
 
-            rom_bank: 0,
+            rom_bank: 1,
             pc: 0,
             tick: 0,
             cycle: 0,

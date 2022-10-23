@@ -59,7 +59,7 @@ impl AddressSpace for GbsAddrSpace<'_> {
     fn read(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x3FFF => {
-                // If the address is in the loaded area, output it; otherwise, call back to $FF
+                // If the address is in the loaded area, output it; otherwise, fall back to $FF
                 // (Note: this should eventually resolve to a jump to $0038 via rst $38.)
                 address
                     .checked_sub(self.load_addr)
@@ -73,12 +73,10 @@ impl AddressSpace for GbsAddrSpace<'_> {
                     })
             }
             0x4000..=0x7FFF => {
-                self.rom
-                    .get(
-                        usize::from(address - 0x4000)
-                            + usize::from(self.logger.borrow().rom_bank) * 0x4000,
-                    )
-                    .copied()
+                let rom_bank = self.logger.borrow().rom_bank;
+                (usize::from(address - 0x4000) + usize::from(rom_bank) * 0x4000)
+                    .checked_sub(self.load_addr.into())
+                    .and_then(|ofs| self.rom.get(ofs).copied())
                     .unwrap_or_else(|| {
                         self.diagnose(
                             DiagnosticLevel::Warning,

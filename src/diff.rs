@@ -10,21 +10,21 @@ use gb_cpu_sim::reg::HwReg;
 
 use crate::{run::IoAccess, Diagnostic, DiagnosticLevel};
 
-const WRITE_PEDANTIC_JITTER: u16 = 100;
-
 #[derive(Debug)]
 pub struct DiffGenerator<'a> {
     // Parameters
     logs: (&'a [IoAccess], &'a [IoAccess]),
+    jitter: u16,
 
     // State
     indices: (usize, usize),
 }
 
 impl<'a> DiffGenerator<'a> {
-    pub(crate) fn new(before_log: &'a [IoAccess], after_log: &'a [IoAccess]) -> Self {
+    pub(crate) fn new(before_log: &'a [IoAccess], after_log: &'a [IoAccess], jitter: u16) -> Self {
         Self {
             logs: (before_log, after_log),
+            jitter,
             indices: (0, 0),
         }
     }
@@ -44,19 +44,19 @@ impl Iterator for DiffGenerator<'_> {
 
                 (Some(before), None) => {
                     self.indices.0 += 1;
-                    Some(diagnose(
+                    diagnose(
                         before,
                         DiagnosticLevel::Error,
                         DiagnosticKind::Removed(before.addr, before.data),
-                    ))
+                    )
                 }
                 (None, Some(after)) => {
                     self.indices.1 += 1;
-                    Some(diagnose(
+                    diagnose(
                         after,
                         DiagnosticLevel::Error,
                         DiagnosticKind::Added(after.addr, after.data),
-                    ))
+                    )
                 }
 
                 (Some(before), Some(after)) => {
@@ -65,19 +65,19 @@ impl Iterator for DiffGenerator<'_> {
                     match before.when.tick.cmp(&after.when.tick) {
                         Ordering::Less => {
                             self.indices.0 += 1;
-                            return Some(diagnose(
+                            return diagnose(
                                 before,
                                 DiagnosticLevel::Error,
                                 DiagnosticKind::Removed(before.addr, before.data),
-                            ));
+                            );
                         }
                         Ordering::Greater => {
                             self.indices.1 += 1;
-                            return Some(diagnose(
+                            return diagnose(
                                 after,
                                 DiagnosticLevel::Error,
-                                DiagnosticKind::Added(before.addr, before.data),
-                            ));
+                                DiagnosticKind::Added(after.addr, after.data),
+                            );
                         }
                         Ordering::Equal => (),
                     }
@@ -97,11 +97,9 @@ impl Iterator for DiffGenerator<'_> {
                             // The write is identical, but has been moved a bit.
                             self.indices.0 += 1;
                             self.indices.1 += 1;
-                            Some(diagnose(
-                                before,
-                                if before.when.cycle.abs_diff(after.when.cycle)
-                                    < WRITE_PEDANTIC_JITTER
-                                {
+                            diagnose(
+                                after,
+                                if before.when.cycle.abs_diff(after.when.cycle) < self.jitter {
                                     DiagnosticLevel::Note
                                 } else {
                                     DiagnosticLevel::Error
@@ -112,7 +110,7 @@ impl Iterator for DiffGenerator<'_> {
                                     (after.when.cycle as i32)
                                         .wrapping_sub(before.when.cycle as i32),
                                 ),
-                            ))
+                            )
                         }
                         // Oh god. Welcome to half-assed heuristics, please do not judge me :(
                         (true, false) => {
@@ -120,39 +118,65 @@ impl Iterator for DiffGenerator<'_> {
                             // Let's assume they are the same write, except bugged.
                             self.indices.0 += 1;
                             self.indices.1 += 1;
-                            Some(diagnose(
-                                before,
+                            diagnose(
+                                after,
                                 DiagnosticLevel::Error,
                                 DiagnosticKind::OtherValue(before.addr, before.data, after.data),
-                            ))
+                            )
                         }
                         (false, true) => {
                             // The written value is identical, but the target register is not.
                             // This is much more iffy than the above, but can stem from e.g. a typo.
                             self.indices.0 += 1;
                             self.indices.1 += 1;
-                            Some(diagnose(
-                                before,
+                            diagnose(
+                                after,
                                 DiagnosticLevel::Error,
                                 DiagnosticKind::OtherReg(before.addr, before.data, after.addr),
-                            ))
+                            )
                         }
                         (false, false) => {
-                            // Nothing matches. Let's report the earliest one of the two.
-                            if before.when.cycle < after.when.cycle {
-                                self.indices.0 += 1;
-                                Some(diagnose(
-                                    before,
-                                    DiagnosticLevel::Error,
-                                    DiagnosticKind::Removed(before.addr, before.data),
-                                ))
-                            } else {
-                                self.indices.1 += 1;
-                                Some(diagnose(
-                                    after,
-                                    DiagnosticLevel::Error,
-                                    DiagnosticKind::Added(after.addr, after.data),
-                                ))
+                            // Nothing matches.
+                            // Let's compare one beyond; if the address matches with the opposite "N+1", assume that they're meant to be paired.
+                            // (The value is too volatile, so it's not checked here.)
+                            match (
+                                self.logs.0.get(self.indices.0 + 1),
+                                self.logs.1.get(self.indices.1 + 1),
+                            ) {
+                                (Some(before2), _) if before2.addr == after.addr => {
+                                    self.indices.0 += 1;
+                                    diagnose(
+                                        before,
+                                        DiagnosticLevel::Error,
+                                        DiagnosticKind::Removed(before.addr, before.data),
+                                    )
+                                }
+                                (_, Some(after2)) if before.addr == after2.addr => {
+                                    self.indices.1 += 1;
+                                    diagnose(
+                                        after,
+                                        DiagnosticLevel::Error,
+                                        DiagnosticKind::Added(after.addr, after.data),
+                                    )
+                                }
+                                _ => {
+                                    // Let's report the earliest one of the two.
+                                    if before.when.cycle < after.when.cycle {
+                                        self.indices.0 += 1;
+                                        diagnose(
+                                            before,
+                                            DiagnosticLevel::Error,
+                                            DiagnosticKind::Removed(before.addr, before.data),
+                                        )
+                                    } else {
+                                        self.indices.1 += 1;
+                                        diagnose(
+                                            after,
+                                            DiagnosticLevel::Error,
+                                            DiagnosticKind::Added(after.addr, after.data),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -166,13 +190,13 @@ fn diagnose(
     access: &IoAccess,
     level: DiagnosticLevel,
     kind: DiagnosticKind,
-) -> Diagnostic<DiagnosticKind> {
-    Diagnostic {
+) -> Option<Diagnostic<DiagnosticKind>> {
+    Some(Diagnostic {
         when: access.when.clone(),
         pc: access.pc.clone(),
         level,
         kind,
-    }
+    })
 }
 
 #[derive(Debug)]
@@ -200,7 +224,7 @@ impl Display for DiagnosticKind {
             }
             Self::Moved(reg, value, delta) => write!(
                 f,
-                "Write of ${:02x} to {} occurs {} cycles {}",
+                "Wrote ${:02x} to {} {} cycles {}",
                 value,
                 RegDispl(*reg),
                 delta.abs(),
@@ -208,17 +232,17 @@ impl Display for DiagnosticKind {
             ),
             Self::OtherValue(reg, before, after) => write!(
                 f,
-                "Write of ${:02x} to {} now writes ${:02x}",
-                before,
+                "Wrote ${:02x} to {} instead of ${:02x}",
+                after,
                 RegDispl(*reg),
-                after
+                before,
             ),
             Self::OtherReg(before, value, after) => write!(
                 f,
-                "Write of ${:02x} to {} is written to {} instead",
+                "${:02x} is written to {} instead of {}",
                 value,
+                RegDispl(*after),
                 RegDispl(*before),
-                RegDispl(*after)
             ),
         }
     }

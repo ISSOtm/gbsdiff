@@ -5,8 +5,7 @@ edition = "2021"
 
 [dependencies]
 argh = "0.1.9"
-#gb-cpu-sim = "1.0.0"
-gb-cpu-sim = { version = "1.0.0", path = "../gb-cpu-sim" }
-owo-colors = "3.5.0"
+gb-cpu-sim = "1.1.0"
+owo-colors = { version = "3.5.0", features = [ "supports-colors" ] }
 parse-display = { version = "0.6.0", default-features = false }
 slicedisplay = "0.2.2"
