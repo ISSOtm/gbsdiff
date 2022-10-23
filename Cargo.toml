@@ -1,7 +1,13 @@
 [package]
 name = "gbsdiff"
-version = "0.2.0"
+description = "A tool for highlighting the differences in the execution of two GBS files."
+authors = ["Eldred Habert <me@eldred.fr>"]
+version = "1.0.0"
 edition = "2021"
+license = "MPL-2.0"
+repository = "https://github.com/ISSOtm/gbsdiff"
+keywords = ["game-boy", "music", "music", "chiptune"]
+categories = ["command-line-utilities", "development-tools::debugging", "development-tools::testing", "emulators", "game-development"]
 
 [dependencies]
 argh = "0.1.9"
