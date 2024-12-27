@@ -2,7 +2,7 @@
 name = "gbsdiff"
 description = "A tool for highlighting the differences in the execution of two GBS files."
 authors = ["Eldred Habert <me@eldred.fr>"]
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 license = "MPL-2.0"
 repository = "https://github.com/ISSOtm/gbsdiff"
